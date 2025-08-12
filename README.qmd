@@ -1,0 +1,395 @@
+---
+title: "csa-py: python implementation of the Callaway and Sant'Anna estimator"
+format: gfm
+toc: true
+---
+
+`csa-py` is an implementation of the [Callaway and Sant'Anna
+(2021)](https://www.sciencedirect.com/science/article/abs/pii/S0304407620303948)
+(CSA) estimator in Python.
+
+[Features](#features) include:
+
+- [Inspection](#inspecting-group-x-time-effects) of group $\times$ time effects
+- Optional `tqdm` [progress bar](#progress-bar) (e.g. when computing many effects on
+  large panels)
+- [Custom group effect aggregation](#custom-group-effect-aggregation)
+- Faster than the original `did` package in R and comparable to the `fastdid` package in R
+  (see [benchmarking](#benchmarking) below).
+  This is made possible by:
+  - Quick group processing with [polars](https://docs.pola.rs/) 🐻‍❄️
+  - Fast(er) (conditional) predicted probablities with [fastlr](https://github.com/jsr-p/fastlr?tab=readme-ov-file)
+
+## Installation
+
+```bash
+uv pip install git+https://github.com/jsr-p/csa-py
+```
+
+## Example
+
+### Balanced panel
+
+Estimating the ATTs:
+
+```{python} 
+import polars as pl
+import csa
+
+res = csa.estimate(
+    # data from https://bcallaway11.github.io/did/
+    data=(mpdta := pl.read_csv("data/mpdta.csv")),
+    outcome="lemp",
+    unit="countyreal",
+    group="first.treat",
+    time="year",
+    covariates=["lpop"],
+    balanced=True,
+    control="never",
+    method="reg",
+    verbose=False,
+)
+
+print(res)
+```
+
+```{python} 
+with pl.Config(tbl_rows=12):
+  # All ATT(g, t) estimates
+  print(res.estimates)
+```
+
+A summary ala. the original R `did` package is also available as:
+
+```{python} 
+res.summary()
+```
+
+The default estimation method is the Outcome Regression (`method="reg"`);
+to use the double robust estimator use `method="dr"`:
+
+```{python} 
+csa.estimate(
+    data=mpdta,
+    outcome="lemp",
+    unit="countyreal",
+    group="first.treat",
+    time="year",
+    covariates=["lpop"],
+    balanced=True,
+    control="never",
+    method="dr",
+    verbose=False,
+).summary()
+```
+
+
+#### Dynamic effects
+
+Aggregating dynamic effects (with relative horizon $k := t - G$):
+
+```{python} 
+dynamic_te = csa.agg_te(res, method="dynamic")
+print(dynamic_te)
+```
+
+The estimates are shown as:
+
+```{python} 
+print(dynamic_te.estimates)
+```
+
+The overall ATT (aggregated across all groups and $k \geq 0$) equals:
+
+```{python} 
+print(
+  f"Overall ATT = {dynamic_te.overall_att:.4f} "
+  f"(SE = {dynamic_te.overall_se:.4f})",
+)
+```
+
+A summary ala. the original R `did` package is also available as:
+
+```{python} 
+dynamic_te.summary()
+```
+
+
+We can also bootstrap the dynamic effects to get simultaneous confidence
+intervals using the multiplier bootstrap (see the algorithm defined on p. 215
+in [CSA
+paper](https://www.sciencedirect.com/science/article/abs/pii/S0304407620303948)
+and [multiplier.py](src/csa/multiplier.py)):
+
+```{python} 
+import numpy as np
+
+np.random.seed(42)
+dynamic_te = csa.agg_te(res, method="dynamic", boot=True)
+print(dynamic_te.boot.estimates)
+```
+
+with overall effect:
+
+```{python} 
+print(
+  f"Overall ATT = {dynamic_te.overall_att:.4f} "
+  f"(SE = {dynamic_te.boot.overall.se.item():.4f})",
+)
+```
+
+or more succintly:
+
+```{python} 
+dynamic_te.summary()
+```
+
+> Note the `95% Simult.` vs. `95% Pointwise ` from before; the confidence
+> intervals are now simultaneous across all periods at once.
+
+
+#### Group effects
+
+Aggregating group effects:
+
+```{python} 
+group_te = csa.agg_te(res, method="group")
+print(group_te.estimates)
+```
+
+```{python} 
+group_te.summary()
+```
+
+
+
+#### Calendar effects
+Aggregating calendar effects:
+
+```{python} 
+calendar_te = csa.agg_te(res, method="calendar")
+print(calendar_te.estimates)
+```
+
+```{python} 
+calendar_te.summary()
+```
+
+
+#### Simple effect
+
+Aggregating simple effect (i.e. average effect in post-horizon periods, $k \geq
+0$):
+
+```{python} 
+simple_te = csa.agg_te(res, method="simple")
+print(simple_te.estimates)
+```
+
+```{python} 
+simple_te.summary()
+```
+
+### Unbalanced panel
+
+Estimating the ATTs on an unbalanced panel with evolution of outcomes as:
+
+<img src="figs/sim_data_ub.png" alt="Simulation data" width="550">
+
+The data is simulated with `python scripts/sim_test.py simub`; see `data_test`
+in [Justfile](Justfile).
+
+```{python} 
+data = pl.read_csv("data/testing/sim_ub.csv")
+print(data.head())
+```
+
+```{python} 
+res_ub = csa.estimate(
+    data=data,
+    group="g",
+    time="t",
+    outcome="y",
+    unit="id",
+    covariates=["X"],
+    balanced=False,
+    control="notyet",
+    verbose=False,
+    method="dr",
+)
+
+# Estimates are NaN when no valid control group exist for the effect
+print(res_ub.estimates)
+```
+
+```{python} 
+# all summaries :=)
+csa.agg_te(res_ub, method="dynamic").summary(); print("\n***")
+csa.agg_te(res_ub, method="group").summary(); print("\n***")
+csa.agg_te(res_ub, method="calendar").summary()
+```
+
+
+
+## Features
+
+### Inspecting group x time effects
+
+`csa-py` supports inspection of a given $ATT(g, t)$ after estimation; e.g. who were the
+controls for the effect $ATT(g, t)$?
+
+All computed effects are stored in the dictionary `atts` of the results
+object.
+
+As an example, we can inspect the `atts` map for the estimated effect for group $2004$ in
+year $2007$:
+
+```{python} 
+g = 2004
+t = 2007
+print(att := res.atts[(g, t)]) # Inspect ATT(g, t)
+```
+
+From the `ATT` object we can see the controls used for the effect:
+
+```{python} 
+
+if isinstance(att, csa.ATT):
+  # G = 1 treated; G = 0 controls.
+  print(att.ids.head())
+  print(att.ids["G"].value_counts())
+```
+
+A helper function `csa.get_controls` extracts the controls for a given
+`ATT` object and `CsaDidResult` results object:
+
+```{python} 
+import typing
+
+# lil' typing hack
+att = typing.cast(csa.ATT, att)
+controls = csa.get_controls(att, res)
+# unit id and group for each control
+print(controls.head())
+```
+
+```{python} 
+print(f"#Controls = {controls.shape[0]}")
+print(controls["first.treat"].value_counts())
+```
+
+
+From the output we see that only the never-treated (`first.treat = 0`) are
+controls for $ATT(2004, 2007)$ above.
+
+> Note that implementation wise I set $G = 0$ for the never-treated although
+> the notation in the paper (and in the literature) is $G = \infty$.
+
+---
+
+In the [unbalanced panel](#unbalanced-panel) example it becomes a bit more
+interesting.
+Consider $ATT(5, 6)$; who are the controls for thise effect in the unbalanced
+panel and using as controls the not-yet-treated units?
+This can be found as follows:
+
+```{python} 
+att = res_ub.atts[(5, 6)]
+if isinstance(att, csa.ATT):
+    controls = csa.get_controls(att, res_ub)
+    print(controls["g"].value_counts().sort("g"))
+```
+
+I.e. the controls for those with $G = 5$ in period $t = 6$ are those with $G
+\in \{7, 8, 9\}$; the not-yet-treated at $t = 6$.
+
+### Custom group effect aggregation
+
+`csa-py` allows for aggregating effects into custom made groups (based on the
+treatment dates).
+E.g. can define 
+$$
+\mathcal{G}_{1} = \{2004, 2005\}, \ \ \mathcal{G}_{2} = \{2006, 2007\}
+$$
+and aggregate the effects for those two collection of treatment groups (the
+2005 group doesn't exist in the `mpdta` but the point is still valid).
+
+This can be done as follows:
+
+
+```{python} 
+agg_res = csa.agg_te_custom_group(
+    res,
+    # Mapping from unit id to custom group `str` val
+    custom_group_map={
+        0: "0",
+        2004: "2004-2005",
+        2005: "2004-2005",
+        2006: "2006-2007",
+        2007: "2006-2007",
+    },
+    verbose=False,
+)
+print(agg_res.estimates)
+```
+
+### Progress bar
+
+![](demo/demo-pbar.gif)
+
+Thanks [`tqdm`](https://github.com/tqdm/tqdm)!
+
+## Comparison to other packages
+
+- [did](https://bcallaway11.github.io/did/) is the original R package for
+  the CSA estimator
+- [fastdid](https://tsailintung.github.io/fastdid/index.html) is a fast
+  alternative to the `did` package in R. Unfortunately `fastdid` does not
+  support *unbalanced* panels when using the double robust estimator. This is a
+  frequent use case in practice when working with microdata and datasets that
+  are "trimmed" i.e. each unit is observed for a fixed window around the event
+  time (here the panel is unbalanced by construction). The `csa-py` package
+  supports this use case.
+
+> Note: This package was mainly developed to sharpen my own understanding.
+
+### Benchmarking
+
+#### Benchmark against `fastdid` package in R
+
+![](figs/bench_res_fastdid.png){width=500px}
+
+- This experiment is akin to the benchmarking experiment conducted in the `fastdid` package,
+see [here](https://tsailintung.github.io/fastdid/articles/misc.html)
+- To reproduce the figure see `bench-fastdid` in the [Justfile](Justfile)
+- Note: in the figure, for $N \in \{10^{2}, 10^{3}, 10^{4}, 10^{5}\}$ the
+  number of benchmark iterations equal $25$; for $N = 10^{6}$ the number of
+  benchmark iterations equal $10$.
+- The fastdid
+  [experiment](https://tsailintung.github.io/fastdid/articles/misc.html) also
+  plots the runtime for the original `did` package; hence this package is also
+  (much) faster than the original `did` package in R (also in the unbalanced
+  panel setting)
+
+<!-- #### Benchmark against `did` package in R -->
+<!---->
+<!-- Simulation experiment on unbalanced panels for varying amount of periods around cut-off and (`delta` parameter in figure) and varying amount of periods (`#T`). -->
+<!---->
+<!-- ![](figs/bench_res.png){width=500px} -->
+<!---->
+<!-- See [script](scripts/benchmark/bench_did.sh) -->
+<!-- and `bench-csa` in the [Justfile](Justfile). -->
+
+## Development
+
+
+```bash
+git clone git@github.com:jsr-p/csa-py.git
+cd csa-py
+uv venv
+uv sync --all-extras
+```
+
+## References
+
+[CSA paper](https://www.sciencedirect.com/science/article/abs/pii/S0304407620303948)
