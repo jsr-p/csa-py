@@ -6,9 +6,42 @@ import itertools as it
 import click
 import numpy as np
 import polars as pl
+import plotnine as pn
 
-from csa.sim import SimParams, build_sim_csa, plot_sim
+from csa.sim import SimParams, build_sim_csa
 from csa import testing
+
+
+def plot_sim(data: pl.DataFrame, sp: SimParams):
+    gp = (
+        data.group_by("g", "t")
+        .agg(
+            pl.col("y").mean(),
+            pl.col("y0").mean(),
+        )
+        .sort("g", "t")
+    )
+    plot = (
+        pn.ggplot(
+            gp.cast({"g": str}).to_pandas(),
+            pn.aes(x="t", y="y", group="g", color="g"),
+        )
+        + pn.geom_line()
+        + pn.geom_point()
+        + pn.geom_line(pn.aes(y="y0", group="g", color="g"), linetype="dashed")
+        + pn.theme_classic()
+        + pn.theme(text=pn.element_text(size=14), plot_caption=pn.element_text(size=12))
+        + pn.ggtitle("Evolution of outcomes $Y_{it}$")
+        + pn.labs(
+            caption=(
+                "Dashed lines show $Y_{it}(0)$"
+                + "\nError terms differ between $Y_{it}(0)$ and $Y_{it}(g)$"
+            )
+        )
+        + pn.scale_color_discrete(name="Group")
+        + pn.scale_x_continuous(breaks=range(sp.start, sp.end + 1))
+    )
+    return plot
 
 
 @click.group()

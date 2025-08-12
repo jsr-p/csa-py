@@ -15,6 +15,7 @@ dependencies = [
     "pyarrow>=19.0.0",
     # scipy bug https://github.com/statsmodels/statsmodels/issues/9542
     "scipy<=1.15.3",
+    "statsmodels>=0.14.4",
     "tabulate>=0.9.0",
     "tqdm>=4.67.1",
 ]
