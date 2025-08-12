@@ -2,6 +2,7 @@
 
 
 - [Installation](#installation)
+  - [Try it out](#try-it-out)
 - [Example](#example)
   - [Balanced panel](#balanced-panel)
   - [Unbalanced panel](#unbalanced-panel)
@@ -37,6 +38,33 @@
 ``` bash
 uv pip install git+https://github.com/jsr-p/csa-py
 ```
+
+### Try it out
+
+With [uv](https://docs.astral.sh/uv/) run the following:
+
+``` bash
+uv run --with "git+https://github.com/jsr-p/csa-py" python -i -c 'import csa
+import polars as pl
+
+mpdta = pl.read_csv("https://gist.githubusercontent.com/jsr-p/c14075f8ba00bcb56c5cb7a279c82d06/raw/9e1161fbba8ee84b95407ce9a56cecee6be71936/mpdta.csv")
+res = csa.estimate(
+    data=mpdta,
+    outcome="lemp",
+    unit="countyreal",
+    group="first.treat",
+    time="year",
+    covariates=["lpop"],
+    balanced=True,
+    control="never",
+    method="reg",
+    verbose=False,
+)
+print(res)'
+```
+
+and inspect the results in the interactive shell; see [balanced
+panel](#balanced-panel) for more.
 
 ## Example
 
@@ -605,11 +633,11 @@ print(controls.head())
     │ ---        ┆ ---         │
     │ i64        ┆ i64         │
     ╞════════════╪═════════════╡
-    │ 48019      ┆ 0           │
-    │ 45051      ┆ 0           │
-    │ 48277      ┆ 0           │
-    │ 13209      ┆ 0           │
-    │ 47047      ┆ 0           │
+    │ 16017      ┆ 0           │
+    │ 18109      ┆ 0           │
+    │ 18035      ┆ 0           │
+    │ 13093      ┆ 0           │
+    │ 51515      ┆ 0           │
     └────────────┴─────────────┘
 
 ``` python
@@ -689,8 +717,6 @@ agg_res = csa.agg_te_custom_group(
 )
 print(agg_res.estimates)
 ```
-
-    0it [00:00, ?it/s]2it [00:00, 7619.08it/s]
 
     shape: (2, 5)
     ┌─────────────┬───────────┬──────────┬───────────┬───────────┐

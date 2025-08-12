@@ -1251,9 +1251,7 @@ def custom_group_csa(csap: CsaParams, cgroup: str):
 
     res = []
     IF_e = np.zeros(shape=(n, len(g_vals)))
-    # pbar = tqdm(desc="Aggregating...", total=len(g_vals))
-    for i, gv in tqdm(enumerate(g_vals)):
-        # pbar.set_postfix_str(f"g={gv}")
+    for i, gv in enumerate(g_vals):
         pt = t >= g  # post treat
         we = (cg == gv) & pt  # IF(g, t) for group g = gv in post-period
         cp = np.ones_like(g) / sum(we)  # uniform over postperiods
@@ -1265,8 +1263,6 @@ def custom_group_csa(csap: CsaParams, cgroup: str):
         est = att[we].mean().item()  # no weights
         res.append((gv, est, se))
         IF_e[:, i] = IF_k
-    #     pbar.update(1)
-    # pbar.close()
 
     res = pl.DataFrame(
         res, schema=[csap.g_col, "att", "se"], orient="row"
