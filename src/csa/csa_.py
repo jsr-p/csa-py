@@ -696,6 +696,10 @@ def att_gt_dr_rc(
 
 
 def concat_ifs(dp: DidParams, res: ATTs):
+    """Concatenates the influence functions.
+
+    ...
+    """
     i_col = dp.i_col
     IFs = np.zeros(shape=(dp.n, len(res)))
     for j, r in enumerate(res.values()):
@@ -781,8 +785,14 @@ def prep_periods(dp: DidParams):
 
 
 def prep_data(dp: DidParams, p: Periods):
-    # map units to integers for easy indexing
+    """Prepare data for estimation.
+
+    Notes:
+    - We map units ids to integers {0, 1, ..., n-1} for easy indexing
+      using the map `units_map`.
+    """
     dp.data = dp.data.with_columns(
+        # map units to integers for easy indexing
         pl.col(dp.i_col).replace_strict(dp.units_map).alias(dp.i_col)
     )
     if dp.control == "notyet":
@@ -949,6 +959,10 @@ def att_gt_all(dp: DidParams):
 
 
 def units_map(data: pl.DataFrame, i_col: str) -> dict[Any, int]:
+    """Mapping from units to new index.
+
+    To speed up indexing in IF.
+    """
     units = data.select(pl.col(i_col).unique()).with_row_index(name="id_int")
     mapping = dict(zip(units[i_col], units["id_int"]))
     return mapping
