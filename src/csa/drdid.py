@@ -226,7 +226,7 @@ def att_oreg_rc(orp: ORegParamsRc):
     eta_t_post = reg_att_treat_post.mean() / w_t_post.mean()
     eta_c = reg_att_cont.mean() / w_cont.mean()
 
-    reg_att = (eta_t_post - eta_c) - eta_t_pre
+    reg_att = (eta_t_post - eta_t_pre) - eta_c
 
     # IF
 
