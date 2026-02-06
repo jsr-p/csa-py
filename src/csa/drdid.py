@@ -12,7 +12,20 @@ from scipy.special import expit
 
 from csa.utils import pull
 
-import fastlr
+try:
+    import fastlr  # type: ignore
+
+    def fast_logit(endog: np.ndarray, exog: np.ndarray):
+        out = fastlr.fastlr(X=exog, y=endog)
+        return FastLogitWrap(out.coefficients, exog)
+
+except ModuleNotFoundError:  # pragma: no cover
+    from csa import logreg
+
+    def fast_logit(endog: np.ndarray, exog: np.ndarray):
+        out = logreg.irls(X=exog, y=endog)
+        return FastLogitWrap(out.coefficients, exog)
+
 
 __all__ = [
     "att_oreg_panel",
@@ -43,11 +56,6 @@ class FastLogitWrap:
 
     def predict(self):
         return expit(self.X @ self.beta)
-
-
-def fast_logit(endog: np.ndarray, exog: np.ndarray):
-    out = fastlr.fastlr(X=exog, y=endog)
-    return FastLogitWrap(out.coefficients, exog)
 
 
 def se_if(IF: np.ndarray):
