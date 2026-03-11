@@ -28,11 +28,18 @@ except ModuleNotFoundError:  # pragma: no cover
 
 
 __all__ = [
-    "att_oreg_panel",
+    # rc
     "att_oreg_rc",
+    "att_ipw_rc",
+    "att_std_ipw_rc",
     "att_dr_rc",
     "att_dr_rc_imp",
+    # panel
+    "att_oreg_panel",
+    "att_ipw_panel",
+    "att_std_ipw_panel",
     "att_dr_panel",
+    "att_dr_panel_imp",
 ]
 
 
@@ -156,13 +163,14 @@ def att_oreg_panel(orp: PanelParams):
     barr = (G == 0).ravel()
     mr = sm.OLS(endog=dy[barr], exog=X[barr]).fit(disp=0)
     coef = mr.params.reshape(-1, 1)
-    dy_c = X @ coef  # predicted dy i.e. Y_1 - Y_0
+    dy_c = X @ coef  # predicted dy i.e. \hat{\mu}_{0, 1}(X)- \hat{\mu}_{0, 0}(X)
     w_t = G
     w_c = G
     att_t = w_t * dy
     att_c = w_c * dy_c
     eta_t = att_t.mean() / w_t.mean()
     eta_c = att_c.mean() / w_c.mean()  # average across n_treat
+    # tau_reg in paper (2.5)
     att = eta_t - eta_c
 
     n = subset.shape[0]
@@ -683,6 +691,228 @@ def att_dr_rc_imp(drp: DrParamsRc) -> DrDidRes:
     )
 
 
+def att_ipw_rc(drp: DrParamsRc) -> DrDidRes:
+    """IPW repeated cross-section estimator."""
+    Y, X, T, D = drp.Y, drp.X, drp.T, drp.D
+    n = Y.shape[0]
+
+    ps_tr = fast_logit(endog=D.ravel(), exog=X)
+    ps_fit = np.minimum(ps_tr.predict(), 1 - 1e-6).reshape(-1, 1)
+    i_weights = np.ones((n, 1))
+    W = ps_fit * (1 - ps_fit) * i_weights
+
+    w_t_pre = i_weights * D * (1 - T)
+    w_t_post = i_weights * D * T
+    w_c_pre = i_weights * ps_fit * (1 - D) * (1 - T) / (1 - ps_fit)
+    w_c_post = i_weights * ps_fit * (1 - D) * T / (1 - ps_fit)
+
+    pi_hat = (i_weights * D).mean()
+    lam_hat = (i_weights * T).mean()
+    one_minus_lam = (i_weights * (1 - T)).mean()
+
+    eta_t_pre = w_t_pre * Y / (pi_hat * one_minus_lam)
+    eta_t_post = w_t_post * Y / (pi_hat * lam_hat)
+    eta_c_pre = w_c_pre * Y / (pi_hat * one_minus_lam)
+    eta_c_post = w_c_post * Y / (pi_hat * lam_hat)
+
+    att_t_pre = eta_t_pre.mean()
+    att_t_post = eta_t_post.mean()
+    att_c_pre = eta_c_pre.mean()
+    att_c_post = eta_c_post.mean()
+
+    ipw_att = (att_t_post - att_t_pre) - (att_c_post - att_c_pre)
+
+    score_ps = i_weights * (D - ps_fit) * X
+    L = cholesky(X.T @ (W * X))
+    hess_ps = cho_solve((L, False), np.eye(X.shape[1])) * n
+    asy_lin_rep_ps = score_ps @ hess_ps
+
+    inf_t_post = (
+        (eta_t_post - att_t_post)
+        - (i_weights * D - pi_hat) * att_t_post / pi_hat
+        - (i_weights * T - lam_hat) * att_t_post / lam_hat
+    )
+    inf_t_pre = (
+        (eta_t_pre - att_t_pre)
+        - (i_weights * D - pi_hat) * att_t_pre / pi_hat
+        - (i_weights * (1 - T) - one_minus_lam) * att_t_pre / one_minus_lam
+    )
+
+    inf_c_post = (
+        (eta_c_post - att_c_post)
+        - (i_weights * D - pi_hat) * att_c_post / pi_hat
+        - (i_weights * T - lam_hat) * att_c_post / lam_hat
+    )
+    inf_c_pre = (
+        (eta_c_pre - att_c_pre)
+        - (i_weights * D - pi_hat) * att_c_pre / pi_hat
+        - (i_weights * (1 - T) - one_minus_lam) * att_c_pre / one_minus_lam
+    )
+
+    mom_logit_pre = (-eta_c_pre * X).mean(axis=0, keepdims=True).T
+    mom_logit_post = (-eta_c_post * X).mean(axis=0, keepdims=True).T
+    inf_logit = asy_lin_rep_ps @ (mom_logit_post - mom_logit_pre)
+
+    att_inf = (inf_t_post - inf_t_pre) - (inf_c_post - inf_c_pre) + inf_logit
+
+    return DrDidRes(
+        att=ipw_att,
+        se=se_if(att_inf),
+        IF=att_inf,
+    )
+
+
+def att_std_ipw_rc(drp: DrParamsRc) -> DrDidRes:
+    """Standardized IPW repeated cross-section estimator."""
+    Y, X, T, D = drp.Y, drp.X, drp.T, drp.D
+    n = Y.shape[0]
+
+    ps_tr = fast_logit(endog=D.ravel(), exog=X)
+    ps_fit = np.minimum(ps_tr.predict(), 1 - 1e-6).reshape(-1, 1)
+    i_weights = np.ones((n, 1))
+    W = ps_fit * (1 - ps_fit) * i_weights
+
+    w_t_pre = i_weights * D * (1 - T)
+    w_t_post = i_weights * D * T
+    w_c_pre = i_weights * ps_fit * (1 - D) * (1 - T) / (1 - ps_fit)
+    w_c_post = i_weights * ps_fit * (1 - D) * T / (1 - ps_fit)
+
+    eta_t_pre = w_t_pre * Y / w_t_pre.mean()
+    eta_t_post = w_t_post * Y / w_t_post.mean()
+    eta_c_pre = w_c_pre * Y / w_c_pre.mean()
+    eta_c_post = w_c_post * Y / w_c_post.mean()
+
+    att_t_pre = eta_t_pre.mean()
+    att_t_post = eta_t_post.mean()
+    att_c_pre = eta_c_pre.mean()
+    att_c_post = eta_c_post.mean()
+
+    ipw_att = (att_t_post - att_t_pre) - (att_c_post - att_c_pre)
+
+    score_ps = i_weights * (D - ps_fit) * X
+    L = cholesky(X.T @ (W * X))
+    hess_ps = cho_solve((L, False), np.eye(X.shape[1])) * n
+    asy_lin_rep_ps = score_ps @ hess_ps
+
+    inf_t_pre = eta_t_pre - w_t_pre * att_t_pre / w_t_pre.mean()
+    inf_t_post = eta_t_post - w_t_post * att_t_post / w_t_post.mean()
+    inf_treat = inf_t_post - inf_t_pre
+
+    inf_c_pre = eta_c_pre - w_c_pre * att_c_pre / w_c_pre.mean()
+    inf_c_post = eta_c_post - w_c_post * att_c_post / w_c_post.mean()
+    inf_cont = inf_c_post - inf_c_pre
+
+    m2_pre = (w_c_pre * (Y - att_c_pre) * X).mean(axis=0, keepdims=True).T
+    m2_pre = m2_pre / w_c_pre.mean()
+    m2_post = (w_c_post * (Y - att_c_post) * X).mean(axis=0, keepdims=True).T
+    m2_post = m2_post / w_c_post.mean()
+
+    inf_cont_ps = asy_lin_rep_ps @ (m2_post - m2_pre)
+    inf_cont = inf_cont + inf_cont_ps
+
+    att_inf = inf_treat - inf_cont
+
+    return DrDidRes(
+        att=ipw_att,
+        se=se_if(att_inf),
+        IF=att_inf,
+    )
+
+
+def att_ipw_panel(orp: PanelParams):
+    """IPW estimator."""
+    G = orp.G
+    X = orp.X
+    dy = orp.dy
+    n = dy.shape[0]
+
+    ps_tr = fast_logit(endog=G.ravel(), exog=X)
+    ps_fit = np.minimum(ps_tr.predict(), 1 - 1e-6).reshape(-1, 1)
+    D = G.reshape(-1, 1)
+    i_weights = np.ones((n, 1))
+
+    W = ps_fit * (1 - ps_fit) * i_weights
+
+    w_treat = i_weights * D
+    w_cont = i_weights * ps_fit * (1 - D) / (1 - ps_fit)
+
+    att_treat = w_treat * dy
+    att_cont = w_cont * dy
+
+    eta_treat = att_treat.mean() / (i_weights * D).mean()
+    eta_cont = att_cont.mean() / (i_weights * D).mean()
+
+    ipw_att = eta_treat - eta_cont
+
+    # IF of logreg
+    score_ps = i_weights * (D - ps_fit) * X
+    L = cholesky(X.T @ (W * X))
+    hess_ps = cho_solve((L, False), np.eye(X.shape[1])) * n
+    asy_lin_rep_ps = score_ps @ hess_ps
+
+    att_lin1 = att_treat - att_cont
+    mom_logit = (att_cont * X).mean(axis=0, keepdims=True).T
+    att_lin2 = asy_lin_rep_ps @ mom_logit
+
+    att_inf = (att_lin1 - att_lin2 - i_weights * D * ipw_att) / (i_weights * D).mean()
+
+    return DrDidRes(
+        att=ipw_att,
+        se=se_if(att_inf),
+        IF=att_inf,
+    )
+
+
+def att_std_ipw_panel(orp: PanelParams):
+    """Standardized IPW estimator."""
+    G = orp.G
+    X = orp.X
+    dy = orp.dy
+    n = dy.shape[0]
+
+    ps_tr = fast_logit(endog=G.ravel(), exog=X)
+    ps_fit = np.minimum(ps_tr.predict(), 1 - 1e-6).reshape(-1, 1)
+    D = G.reshape(-1, 1)
+    i_weights = np.ones((n, 1))
+
+    W = ps_fit * (1 - ps_fit) * i_weights
+
+    w_treat = i_weights * D
+    w_cont = i_weights * ps_fit * (1 - D) / (1 - ps_fit)
+
+    att_treat = w_treat * dy
+    att_cont = w_cont * dy
+
+    eta_treat = att_treat.mean() / w_treat.mean()
+    eta_cont = att_cont.mean() / w_cont.mean()
+
+    ipw_att = eta_treat - eta_cont
+
+    score_ps = i_weights * (D - ps_fit) * X
+    L = cholesky(X.T @ (W * X))
+    hess_ps = cho_solve((L, False), np.eye(X.shape[1])) * n
+    asy_lin_rep_ps = score_ps @ hess_ps
+
+    inf_treat = (att_treat - w_treat * eta_treat) / w_treat.mean()
+
+    m2 = (w_cont * (dy - eta_cont) * X).mean(axis=0, keepdims=True).T
+    inf_cont2 = asy_lin_rep_ps @ m2
+    inf_control = (att_cont - w_cont * eta_cont + inf_cont2) / w_cont.mean()
+
+    att_inf = inf_treat - inf_control
+
+    return DrDidRes(
+        att=ipw_att,
+        se=se_if(att_inf),
+        IF=att_inf,
+    )
+
+
+@dataclass
+class DrDidResExt(DrDidRes):
+    if_est_effects: dict[str, np.ndarray]
+
+
 def att_dr_panel(orp: PanelParams):
     """Doubly-Robust panel estimator.
 
@@ -722,6 +952,7 @@ def att_dr_panel(orp: PanelParams):
     hess_ps = cho_solve((L, False), np.eye(X.shape[1])) * n
     if_ps = score_ps @ hess_ps  # IF of logreg; dim (n, k)
 
+    # estimation effect ols; treated part
     # if_ols_pre: (n, k); X is just the \dot{\mu} while OLS
     if_t_1 = dr_att_t - w_t * eta_t
     m1 = (w_t * X).mean(axis=0, keepdims=True).T  # (k, 1)
@@ -734,7 +965,7 @@ def att_dr_panel(orp: PanelParams):
     m2 = (w_c * (dy - dy_hat - eta_c) * X).mean(axis=0, keepdims=True).T
     if_c_2 = if_ps @ m2
 
-    # estimation effect ols
+    # estimation effect ols; control part
     m3 = (w_c * X).mean(axis=0, keepdims=True).T
     if_c_3 = if_ols_pre @ m3
 
@@ -742,8 +973,75 @@ def att_dr_panel(orp: PanelParams):
     if_c = (if_c_1 + if_c_2 - if_c_3) / w_c.mean()
     if_dr_att = if_t - if_c
 
+    return DrDidResExt(
+        att=dr_att,
+        se=se_if(if_dr_att),
+        IF=if_dr_att,
+        if_est_effects={
+            "pscore": if_c_2,
+            "ols_cont": if_c_3,
+            "ols_treat": if_t_2,
+        },
+    )
+
+
+def att_dr_panel_imp(orp: PanelParams):
+    """Doubly-Robust panel estimator.
+
+    https://psantanna.com/DRDID/reference/drdid_imp_panel.html
+    """
+    G = orp.G
+    X = orp.X
+    dy = orp.dy
+    n = dy.shape[0]
+
+    D = G.reshape(-1, 1)
+    i_weights = np.ones((n, 1))
+    i_weights = i_weights / i_weights.mean()
+
+    ps_ipt = pscore_cal(D, X)
+    ps_fit = ps_ipt.pscore
+    ps_fit = np.minimum(ps_fit, 1 - 1e-6).reshape(-1, 1)
+
+    w_ps = (ps_fit / (1 - ps_fit)).ravel()
+    b = (D == 0).ravel()
+    oreg_c = oreg(X, dy, b=b, weights=w_ps)
+    dy_hat = oreg_c.pred
+
+    dr_att_summand = (1 - (1 - D) / (1 - ps_fit)) * (dy - dy_hat)
+    dr_att = (i_weights * dr_att_summand).mean() / (D * i_weights).mean()
+
+    if_dr_att = i_weights * (dr_att_summand - D * dr_att) / (D * i_weights).mean()
+
     return DrDidRes(
         att=dr_att,
         se=se_if(if_dr_att),
         IF=if_dr_att,
     )
+
+
+def twfe(
+    data: pl.DataFrame,
+    outcome: str,
+    time: str,
+    treatment: str,
+    covariates: list[str],
+):
+    Y = pull(data, outcome, keep_dims=True)
+    T = pull(data, time, keep_dims=True)
+    D = pull(data, treatment, keep_dims=True)
+    X = data.select(covariates).to_numpy()
+
+    exog = np.column_stack((T, D, T * D, X))
+    names = ["T", "D", "T * D"] + covariates
+    res = sm.OLS(endog=Y, exog=exog).fit(disp=0)
+    return {
+        "att": float(res.params[2]),
+        "se": float(res.bse[2]),
+        "results": pl.DataFrame(
+            {
+                "variable": names,
+                "estimates": res.params.ravel(),
+            }
+        ),
+    }

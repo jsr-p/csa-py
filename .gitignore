@@ -193,3 +193,5 @@ README.quarto_ipynb
 docs/source
 palette.png
 demo/demo-pbar-small.mp4
+/misc
+/scripts/r_scripts

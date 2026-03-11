@@ -2,6 +2,7 @@ from csa.sim import build_sim_csa, SimParams
 from csa.csa_ import (
     estimate,
     agg_te,
+    BootRes,
     CsaDidResult,
     AggTeResult,
     AggTeResultBoot,
@@ -20,6 +21,7 @@ from csa.csa_ import (
 __all__ = [
     "estimate",
     "agg_te",
+    "BootRes",
     "CsaDidResult",
     "AggTeResult",
     "AggTeResultBoot",

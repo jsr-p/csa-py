@@ -92,6 +92,50 @@ def test_drrc_imp():
     assert np.allclose(-0.2088586, drres.att)
 
 
+def test_ipw_rc_sim():
+    simrc = pl.read_csv("data/sim_rc.csv")
+
+    Y = pull(simrc, "y", keep_dims=True)
+    D = pull(simrc, "d", keep_dims=True)
+    T = pull(simrc, "post", keep_dims=True)
+    X = np.column_stack(
+        (np.ones_like(D), simrc.select("x1", "x2", "x3", "x4").to_numpy())
+    )
+    drp = drdid.DrParamsRc(
+        subset=simrc,
+        X=X,
+        Y=Y,
+        T=T,
+        D=D,
+    )
+    drres = drdid.att_ipw_rc(drp)
+
+    assert np.isclose(-19.8933, drres.att, atol=1e-3)
+    assert np.isclose(53.8682, drres.se, atol=1e-1)
+
+
+def test_std_ipw_rc_sim():
+    simrc = pl.read_csv("data/sim_rc.csv")
+
+    Y = pull(simrc, "y", keep_dims=True)
+    D = pull(simrc, "d", keep_dims=True)
+    T = pull(simrc, "post", keep_dims=True)
+    X = np.column_stack(
+        (np.ones_like(D), simrc.select("x1", "x2", "x3", "x4").to_numpy())
+    )
+    drp = drdid.DrParamsRc(
+        subset=simrc,
+        X=X,
+        Y=Y,
+        T=T,
+        D=D,
+    )
+    drres = drdid.att_std_ipw_rc(drp)
+
+    assert np.isclose(-15.8033, drres.att, atol=1e-3)
+    assert np.isclose(9.0879, drres.se, atol=1e-1)
+
+
 def test_dr_panel():
     df = pl.read_csv(testing.FP_DATA / "lalonde_cps.csv")
     y0 = pull(df, "y0", keep_dims=True)
@@ -109,3 +153,58 @@ def test_dr_panel():
     assert np.allclose(att, output.att)
     # np.allclose(se, output.se)  # wrongly calculated in drdid
     assert np.allclose(IF, output.IF)
+
+
+def test_dr_panel_imp_lalonde_sim():
+    df = pl.read_csv("data/lalonde_sim_imp.csv")
+    y0 = pull(df, "re75", keep_dims=True)
+    y1 = pull(df, "re78", keep_dims=True)
+    D = pull(df, "experimental", keep_dims=True)
+    covs = ["age", "educ", "black", "married", "nodegree", "hisp", "re74"]
+    X = df.select(covs).to_numpy()
+    X = np.column_stack((np.ones((X.shape[0], 1)), X))
+    dy = y1 - y0
+
+    params = drdid.PanelParams(subset=df, X=X, G=D, dy=dy)
+    output = drdid.att_dr_panel_imp(params)
+
+    # Reference (R): ATT=-615.2344, SE=683.2211
+    # Numerical optimization issues in the ipt estimator
+    assert np.isclose(output.att, -615.2344, atol=25)
+    assert np.isclose(output.se, 683.2211, atol=25)
+
+
+def test_ipw_panel_lalonde_sim():
+    df = pl.read_csv("data/lalonde_sim_imp.csv")
+    y0 = pull(df, "re75", keep_dims=True)
+    y1 = pull(df, "re78", keep_dims=True)
+    D = pull(df, "experimental", keep_dims=True)
+    covs = ["age", "educ", "black", "married", "nodegree", "hisp", "re74"]
+    X = df.select(covs).to_numpy()
+    X = np.column_stack((np.ones((X.shape[0], 1)), X))
+    dy = y1 - y0
+
+    params = drdid.PanelParams(subset=df, X=X, G=D, dy=dy)
+    output = drdid.att_ipw_panel(params)
+
+    # Reference (R): ATT=-724.1929, SE=692.1639
+    assert np.isclose(output.att, -724.1929, atol=1e-4)
+    assert np.isclose(output.se, 692.0947, atol=1e-4)
+
+
+def test_std_ipw_panel_lalonde_sim():
+    df = pl.read_csv("data/lalonde_sim_imp.csv")
+    y0 = pull(df, "re75", keep_dims=True)
+    y1 = pull(df, "re78", keep_dims=True)
+    D = pull(df, "experimental", keep_dims=True)
+    covs = ["age", "educ", "black", "married", "nodegree", "hisp", "re74"]
+    X = df.select(covs).to_numpy()
+    X = np.column_stack((np.ones((X.shape[0], 1)), X))
+    dy = y1 - y0
+
+    params = drdid.PanelParams(subset=df, X=X, G=D, dy=dy)
+    output = drdid.att_std_ipw_panel(params)
+
+    # Reference (R): ATT=-655.9068, SE=687.7806
+    assert np.isclose(output.att, -655.9068, atol=25)
+    assert np.isclose(output.se, 687.7806, atol=25)

@@ -96,3 +96,18 @@ def assert_cprobs(out: pl.DataFrame, t_col: str = "t"):
     pgt = pull(out, "pgt")
     for tv in ts:
         assert_close(pgt[t == tv].sum(), 1)
+
+
+def lalonde_long():
+    df = pl.read_csv("data/lalonde_sim_imp.csv")
+    covs = ["age", "educ", "black", "married", "nodegree", "hisp", "re74"]
+    long = df.unpivot(
+        on=["re75", "re78"],
+        index=covs + ["experimental"],
+        variable_name="time",
+        value_name="outcome",
+    ).with_columns(
+        pl.col("time").replace({"re75": 0, "re78": 1}).cast(pl.Int8),
+        pl.col("outcome").cast(pl.Float64),
+    )
+    return long
